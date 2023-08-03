@@ -20,7 +20,7 @@ from torch import nn
 from ..utils import deprecate, logging, maybe_allow_in_graph
 from ..utils.import_utils import is_xformers_available
 from .lora import LoRALinearLayer
-
+import numpy as np
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -86,8 +86,9 @@ class Attention(nn.Module):
         self._from_deprecated_attn_block = _from_deprecated_attn_block
 
         self.scale_qk = scale_qk
+        self.scale_switch=False
+        self.dim_head=dim_head
         self.scale = dim_head**-0.5 if self.scale_qk else 1.0
-
         self.heads = heads
         # for slice_size > 0 the attention score computation
         # is split across the batch axis to save memory
@@ -158,8 +159,11 @@ class Attention(nn.Module):
         # torch.nn.functional.scaled_dot_product_attention for native Flash/memory_efficient_attention
         # but only if it has the default `scale` argument. TODO remove scale_qk check when we move to torch 2.1
         if processor is None:
-            processor = (
-                AttnProcessor2_0() if hasattr(F, "scaled_dot_product_attention") and self.scale_qk else AttnProcessor()
+            # processor = (
+            #     AttnProcessor2_0() if hasattr(F, "scaled_dot_product_attention") and self.scale_qk else AttnProcessor()
+            # )
+            processor=(
+                AttnProcessor()
             )
         self.set_processor(processor)
 
@@ -315,10 +319,11 @@ class Attention(nn.Module):
 
         self.processor = processor
 
-    def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None, **cross_attention_kwargs):
+    def forward(self, hidden_states, scale_switch=False,encoder_hidden_states=None, attention_mask=None, **cross_attention_kwargs):
         # The `Attention` class can call different attention processors / attention functions
         # here we simply pass along all tensors to the selected processor class
         # For standard processors that are defined here, `**cross_attention_kwargs` is empty
+        self.scale_switch=scale_switch
         return self.processor(
             self,
             hidden_states,
@@ -345,8 +350,14 @@ class Attention(nn.Module):
 
         return tensor
 
-    def get_attention_scores(self, query, key, attention_mask=None):
+    def get_attention_scores(self, query, key, attention_mask=None): #TODO scaling factor right here!!!
         dtype = query.dtype
+        num_traintoken=512**2
+        num_testtoken=query.shape[1]
+        if self.scale_switch:
+        # print(self.scale_switch)
+            self.scale=(np.log(num_testtoken)/np.log(num_traintoken)/self.dim_head)**0.5 if self.scale_qk else 1.0 ##have changed it
+        
         if self.upcast_attention:
             query = query.float()
             key = key.float()
@@ -365,7 +376,7 @@ class Attention(nn.Module):
             query,
             key.transpose(-1, -2),
             beta=beta,
-            alpha=self.scale,
+            alpha=self.scale,#TODO:this is the scale factor
         )
         del baddbmm_input
 
@@ -472,10 +483,10 @@ class AttnProcessor:
         if attn.group_norm is not None:
             hidden_states = attn.group_norm(hidden_states.transpose(1, 2)).transpose(1, 2)
 
-        query = attn.to_q(hidden_states)
+        query = attn.to_q(hidden_states) #hidden_states (batch_size, height * width,channel)
 
         if encoder_hidden_states is None:
-            encoder_hidden_states = hidden_states
+            encoder_hidden_states = hidden_states #self attention
         elif attn.norm_cross:
             encoder_hidden_states = attn.norm_encoder_hidden_states(encoder_hidden_states)
 

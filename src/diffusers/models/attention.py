@@ -132,6 +132,7 @@ class BasicTransformerBlock(nn.Module):
     def forward(
         self,
         hidden_states: torch.FloatTensor,
+        scale_switch: bool = False,
         attention_mask: Optional[torch.FloatTensor] = None,
         encoder_hidden_states: Optional[torch.FloatTensor] = None,
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
@@ -154,6 +155,7 @@ class BasicTransformerBlock(nn.Module):
 
         attn_output = self.attn1(
             norm_hidden_states,
+            scale_switch=scale_switch,
             encoder_hidden_states=encoder_hidden_states if self.only_cross_attention else None,
             attention_mask=attention_mask,
             **cross_attention_kwargs,
@@ -170,6 +172,7 @@ class BasicTransformerBlock(nn.Module):
 
             attn_output = self.attn2(
                 norm_hidden_states,
+                scale_switch=False,
                 encoder_hidden_states=encoder_hidden_states,
                 attention_mask=encoder_attention_mask,
                 **cross_attention_kwargs,

@@ -534,6 +534,7 @@ class StableDiffusionPipeline(DiffusionPipeline, TextualInversionLoaderMixin, Lo
         callback_steps: int = 1,
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         guidance_rescale: float = 0.0,
+        scale_switch: bool = False,
     ):
         r"""
         The call function to the pipeline for generation.
@@ -673,6 +674,7 @@ class StableDiffusionPipeline(DiffusionPipeline, TextualInversionLoaderMixin, Lo
                     encoder_hidden_states=prompt_embeds,
                     cross_attention_kwargs=cross_attention_kwargs,
                     return_dict=False,
+                    scale_switch=scale_switch,
                 )[0]
 
                 # perform guidance

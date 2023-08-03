@@ -508,7 +508,7 @@ class UNetMidBlock2D(nn.Module):
         hidden_states = self.resnets[0](hidden_states, temb)
         for attn, resnet in zip(self.attentions, self.resnets[1:]):
             if attn is not None:
-                hidden_states = attn(hidden_states, temb=temb)
+                hidden_states = attn(hidden_states, temb=temb) #FIXME: whether to add scale_switch
             hidden_states = resnet(hidden_states, temb)
 
         return hidden_states
@@ -603,6 +603,7 @@ class UNetMidBlock2DCrossAttn(nn.Module):
     def forward(
         self,
         hidden_states: torch.FloatTensor,
+        scale_switch:bool = False,
         temb: Optional[torch.FloatTensor] = None,
         encoder_hidden_states: Optional[torch.FloatTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
@@ -613,6 +614,7 @@ class UNetMidBlock2DCrossAttn(nn.Module):
         for attn, resnet in zip(self.attentions, self.resnets[1:]):
             hidden_states = attn(
                 hidden_states,
+                scale_switch,
                 encoder_hidden_states=encoder_hidden_states,
                 cross_attention_kwargs=cross_attention_kwargs,
                 attention_mask=attention_mask,
@@ -712,6 +714,7 @@ class UNetMidBlock2DSimpleCrossAttn(nn.Module):
     def forward(
         self,
         hidden_states: torch.FloatTensor,
+        scale_switch: bool = False,
         temb: Optional[torch.FloatTensor] = None,
         encoder_hidden_states: Optional[torch.FloatTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
@@ -736,6 +739,7 @@ class UNetMidBlock2DSimpleCrossAttn(nn.Module):
             # attn
             hidden_states = attn(
                 hidden_states,
+                scale_switch=scale_switch,
                 encoder_hidden_states=encoder_hidden_states,
                 attention_mask=mask,
                 **cross_attention_kwargs,
@@ -839,12 +843,12 @@ class AttnDownBlock2D(nn.Module):
         else:
             self.downsamplers = None
 
-    def forward(self, hidden_states, temb=None, upsample_size=None):
+    def forward(self, hidden_states, scale_switch=False, temb=None, upsample_size=None):
         output_states = ()
 
         for resnet, attn in zip(self.resnets, self.attentions):
             hidden_states = resnet(hidden_states, temb)
-            hidden_states = attn(hidden_states)
+            hidden_states = attn(hidden_states,scale_switch=scale_switch)
             output_states = output_states + (hidden_states,)
 
         if self.downsamplers is not None:
@@ -950,6 +954,7 @@ class CrossAttnDownBlock2D(nn.Module):
     def forward(
         self,
         hidden_states: torch.FloatTensor,
+        scale_switch:bool = False,
         temb: Optional[torch.FloatTensor] = None,
         encoder_hidden_states: Optional[torch.FloatTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
@@ -983,6 +988,7 @@ class CrossAttnDownBlock2D(nn.Module):
                 hidden_states = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(attn, return_dict=False),
                     hidden_states,
+                    scale_switch,
                     encoder_hidden_states,
                     None,  # timestep
                     None,  # class_labels
@@ -995,6 +1001,7 @@ class CrossAttnDownBlock2D(nn.Module):
                 hidden_states = resnet(hidden_states, temb)
                 hidden_states = attn(
                     hidden_states,
+                    scale_switch,
                     encoder_hidden_states=encoder_hidden_states,
                     cross_attention_kwargs=cross_attention_kwargs,
                     attention_mask=attention_mask,
@@ -1235,10 +1242,10 @@ class AttnDownEncoderBlock2D(nn.Module):
         else:
             self.downsamplers = None
 
-    def forward(self, hidden_states):
+    def forward(self, hidden_states,scale_switch=False):
         for resnet, attn in zip(self.resnets, self.attentions):
             hidden_states = resnet(hidden_states, temb=None)
-            hidden_states = attn(hidden_states)
+            hidden_states = attn(hidden_states,scale_switch=scale_switch)
 
         if self.downsamplers is not None:
             for downsampler in self.downsamplers:
@@ -1328,12 +1335,12 @@ class AttnSkipDownBlock2D(nn.Module):
             self.downsamplers = None
             self.skip_conv = None
 
-    def forward(self, hidden_states, temb=None, skip_sample=None):
+    def forward(self, hidden_states,scale_switch=False, temb=None, skip_sample=None):
         output_states = ()
 
         for resnet, attn in zip(self.resnets, self.attentions):
             hidden_states = resnet(hidden_states, temb)
-            hidden_states = attn(hidden_states)
+            hidden_states = attn(hidden_states,scale_switch=scale_switch)
             output_states += (hidden_states,)
 
         if self.downsamplers is not None:
@@ -1623,6 +1630,7 @@ class SimpleCrossAttnDownBlock2D(nn.Module):
     def forward(
         self,
         hidden_states: torch.FloatTensor,
+        scale_switch: bool = False,
         temb: Optional[torch.FloatTensor] = None,
         encoder_hidden_states: Optional[torch.FloatTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
@@ -1659,6 +1667,7 @@ class SimpleCrossAttnDownBlock2D(nn.Module):
                 hidden_states = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(attn, return_dict=False),
                     hidden_states,
+                    scale_switch,
                     encoder_hidden_states,
                     mask,
                     cross_attention_kwargs,
@@ -1668,6 +1677,7 @@ class SimpleCrossAttnDownBlock2D(nn.Module):
 
                 hidden_states = attn(
                     hidden_states,
+                    scale_switch=scale_switch,
                     encoder_hidden_states=encoder_hidden_states,
                     attention_mask=mask,
                     **cross_attention_kwargs,
@@ -1979,7 +1989,7 @@ class AttnUpBlock2D(nn.Module):
         else:
             self.upsamplers = None
 
-    def forward(self, hidden_states, res_hidden_states_tuple, temb=None, upsample_size=None):
+    def forward(self, hidden_states,res_hidden_states_tuple,scale_switch: bool = False, temb=None, upsample_size=None):
         for resnet, attn in zip(self.resnets, self.attentions):
             # pop res hidden states
             res_hidden_states = res_hidden_states_tuple[-1]
@@ -1987,7 +1997,7 @@ class AttnUpBlock2D(nn.Module):
             hidden_states = torch.cat([hidden_states, res_hidden_states], dim=1)
 
             hidden_states = resnet(hidden_states, temb)
-            hidden_states = attn(hidden_states)
+            hidden_states = attn(hidden_states,scale_switch=scale_switch)
 
         if self.upsamplers is not None:
             for upsampler in self.upsamplers:
@@ -2087,6 +2097,7 @@ class CrossAttnUpBlock2D(nn.Module):
         self,
         hidden_states: torch.FloatTensor,
         res_hidden_states_tuple: Tuple[torch.FloatTensor, ...],
+        scale_switch: bool = False,
         temb: Optional[torch.FloatTensor] = None,
         encoder_hidden_states: Optional[torch.FloatTensor] = None,
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
@@ -2121,6 +2132,7 @@ class CrossAttnUpBlock2D(nn.Module):
                 hidden_states = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(attn, return_dict=False),
                     hidden_states,
+                    scale_switch,
                     encoder_hidden_states,
                     None,  # timestep
                     None,  # class_labels
@@ -2133,6 +2145,7 @@ class CrossAttnUpBlock2D(nn.Module):
                 hidden_states = resnet(hidden_states, temb)
                 hidden_states = attn(
                     hidden_states,
+                    scale_switch=scale_switch,
                     encoder_hidden_states=encoder_hidden_states,
                     cross_attention_kwargs=cross_attention_kwargs,
                     attention_mask=attention_mask,
@@ -2351,10 +2364,10 @@ class AttnUpDecoderBlock2D(nn.Module):
         else:
             self.upsamplers = None
 
-    def forward(self, hidden_states, temb=None):
+    def forward(self, hidden_states,scale_switch: bool = False, temb=None):
         for resnet, attn in zip(self.resnets, self.attentions):
             hidden_states = resnet(hidden_states, temb=temb)
-            hidden_states = attn(hidden_states, temb=temb)
+            hidden_states = attn(hidden_states, scale_switch=scale_switch,temb=temb)
 
         if self.upsamplers is not None:
             for upsampler in self.upsamplers:
@@ -2454,7 +2467,7 @@ class AttnSkipUpBlock2D(nn.Module):
             self.skip_norm = None
             self.act = None
 
-    def forward(self, hidden_states, res_hidden_states_tuple, temb=None, skip_sample=None):
+    def forward(self, hidden_states, res_hidden_states_tuple,scale_switch: bool = False, temb=None, skip_sample=None):
         for resnet in self.resnets:
             # pop res hidden states
             res_hidden_states = res_hidden_states_tuple[-1]
@@ -2463,7 +2476,7 @@ class AttnSkipUpBlock2D(nn.Module):
 
             hidden_states = resnet(hidden_states, temb)
 
-        hidden_states = self.attentions[0](hidden_states)
+        hidden_states = self.attentions[0](hidden_states,scale_switch=scale_switch)
 
         if skip_sample is not None:
             skip_sample = self.upsampler(skip_sample)
@@ -2778,6 +2791,7 @@ class SimpleCrossAttnUpBlock2D(nn.Module):
         self,
         hidden_states: torch.FloatTensor,
         res_hidden_states_tuple: Tuple[torch.FloatTensor, ...],
+        scale_switch: bool = False,
         temb: Optional[torch.FloatTensor] = None,
         encoder_hidden_states: Optional[torch.FloatTensor] = None,
         upsample_size: Optional[int] = None,
@@ -2820,6 +2834,7 @@ class SimpleCrossAttnUpBlock2D(nn.Module):
                 hidden_states = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(attn, return_dict=False),
                     hidden_states,
+                    scale_switch,
                     encoder_hidden_states,
                     mask,
                     cross_attention_kwargs,
@@ -2829,6 +2844,7 @@ class SimpleCrossAttnUpBlock2D(nn.Module):
 
                 hidden_states = attn(
                     hidden_states,
+                    scale_switch=scale_switch,
                     encoder_hidden_states=encoder_hidden_states,
                     attention_mask=mask,
                     **cross_attention_kwargs,
